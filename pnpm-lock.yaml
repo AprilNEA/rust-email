@@ -8,21 +8,24 @@ importers:
 
   .:
     dependencies:
+      change-case:
+        specifier: ^5.4.4
+        version: 5.4.4
       react:
-        specifier: ^19.0.0
+        specifier: '*'
         version: 19.1.1
       react-dom:
-        specifier: ^19.0.0
+        specifier: '*'
         version: 19.1.1(react@19.1.1)
     devDependencies:
       '@types/react':
-        specifier: ^19.1.12
+        specifier: '*'
         version: 19.1.12
       bunchee:
-        specifier: ^6.6.0
+        specifier: '*'
         version: 6.6.0(typescript@5.9.2)
       typescript:
-        specifier: ^5.6.3
+        specifier: '*'
         version: 5.9.2
 
   packages/askama:
@@ -346,6 +349,9 @@ packages:
   chalk@5.6.0:
     resolution: {integrity: sha512-46QrSQFyVSEyYAgQ22hQ+zDa60YHA4fBstHmtSApj1Y5vKtG27fWowW03jCk5KcbXEWPZUIR894aARCA/G1kfQ==}
     engines: {node: ^12.17.0 || ^14.13 || >=16.0.0}
+
+  change-case@5.4.4:
+    resolution: {integrity: sha512-HRQyTk2/YPEkt9TnUPbOpr64Uw3KOicFWPVBb+xiHvd6eBx/qPr9xqfBFDT8P2vWsvvz4jbEkfDe71W3VyNu2w==}
 
   clean-css@5.3.3:
     resolution: {integrity: sha512-D5J+kHaVb/wKSFcyyV75uCn8fiY4sV38XJoe4CUyGQ+mOU/fMVYUdH1hJC+CJQ5uY3EnW27SbJYS4X8BiLrAFg==}
@@ -891,6 +897,8 @@ snapshots:
       typescript: 5.9.2
 
   chalk@5.6.0: {}
+
+  change-case@5.4.4: {}
 
   clean-css@5.3.3:
     dependencies:

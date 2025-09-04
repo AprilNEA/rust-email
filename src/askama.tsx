@@ -1,3 +1,4 @@
+import { snakeCase } from "change-case";
 import React from "react";
 
 /**
@@ -54,12 +55,7 @@ export function AskamaWrapper<P extends Record<string, any>>(
   config: AskamaConfig = {}
 ): React.ComponentType {
   // Convert prop names to snake_case
-  const toSnakeCase = (str: string): string => {
-    if (!config.useSnakeCase) return str;
-    return str
-      .replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)
-      .slice(1);
-  };
+  const toSnakeCase = config.useSnakeCase ? snakeCase : (str: string) => str;
 
   // Generate Askama placeholders
   const generateAskamaProps = (): Record<string, any> => {
