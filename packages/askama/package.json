@@ -1,0 +1,28 @@
+{
+  "name": "askama",
+  "version": "1.0.0",
+  "description": "A library for creating email templates with React but for Rust Askama",
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "bunchee"
+  },
+  "keywords": [
+    "email",
+    "react",
+    "email-templates"
+  ],
+  "author": "AprilNEA <github@sku.moe>",
+  "license": "MIT",
+  "dependencies": {
+    "react": "*",
+    "react-dom": "*"
+  },
+  "devDependencies": {
+    "@types/react": "*",
+    "bunchee": "*",
+    "typescript": "*"
+  }
+}

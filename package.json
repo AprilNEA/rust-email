@@ -1,0 +1,21 @@
+{
+  "name": "rust-email",
+  "version": "0.1.0",
+  "private": true,
+  "keywords": [
+    "email",
+    "react",
+    "email-templates"
+  ],
+  "author": "AprilNEA <i@sku.moe>",
+  "license": "MIT",
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.12",
+    "bunchee": "^6.6.0",
+    "typescript": "^5.6.3"
+  }
+}
