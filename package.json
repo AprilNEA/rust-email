@@ -28,6 +28,14 @@
   ],
   "author": "AprilNEA <github@sku.moe>",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AprilNEA/rust-email.git"
+  },
+  "bugs": {
+    "url": "https://github.com/AprilNEA/rust-email/issues"
+  },
+  "homepage": "https://github.com/AprilNEA/rust-email#readme",
   "dependencies": {
     "react": "*",
     "react-dom": "*"
