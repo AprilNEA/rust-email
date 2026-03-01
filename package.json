@@ -1,7 +1,7 @@
 {
   "name": "rust-email",
-  "version": "0.1.4",
-  "description": "A library for creating email templates with React but for Rust Askama",
+  "version": "0.2.0",
+  "description": "Bridge react-email templates to Rust template engines (Askama/Tera/minijinja)",
   "type": "module",
   "exports": {
     ".": {
@@ -13,18 +13,38 @@
       "types": "./dist/askama.d.ts",
       "import": "./dist/askama.js",
       "require": "./dist/askama.cjs"
+    },
+    "./render": {
+      "types": "./dist/render.d.ts",
+      "import": "./dist/render.js",
+      "require": "./dist/render.cjs"
+    },
+    "./schema": {
+      "types": "./dist/schema.d.ts",
+      "import": "./dist/schema.js",
+      "require": "./dist/schema.cjs"
+    },
+    "./codegen": {
+      "types": "./dist/codegen.d.ts",
+      "import": "./dist/codegen.js",
+      "require": "./dist/codegen.cjs"
     }
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "bunchee"
+    "build": "bunchee",
+    "typecheck": "tsc --noEmit"
   },
   "keywords": [
     "email",
     "react",
-    "email-templates"
+    "react-email",
+    "askama",
+    "rust",
+    "template",
+    "codegen"
   ],
   "author": "AprilNEA <github@sku.moe>",
   "license": "MIT",
@@ -37,13 +57,29 @@
   },
   "homepage": "https://github.com/AprilNEA/rust-email#readme",
   "dependencies": {
-    "change-case": "^5.4.4",
-    "react": "*",
-    "react-dom": "*"
+    "change-case": "^5.4.4"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18",
+    "@react-email/render": ">=1.0.0",
+    "ts-morph": ">=24.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@react-email/render": {
+      "optional": false
+    },
+    "ts-morph": {
+      "optional": true
+    }
   },
   "devDependencies": {
+    "@react-email/render": "^1.0.0",
     "@types/react": "*",
     "bunchee": "*",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "ts-morph": "^25.0.0",
     "typescript": "*"
   }
 }
