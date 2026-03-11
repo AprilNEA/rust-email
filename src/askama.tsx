@@ -48,6 +48,11 @@ export interface AskamaConfig {
 /**
  * AskamaWrapper HOC
  * Convert React Email component to Askama compatible template
+ *
+ * @deprecated Use `renderTemplate()` from `rust-email/render` instead.
+ * AskamaWrapper replaces props **before** React renders, which breaks
+ * `&&` conditionals and `??` fallbacks. It will be removed in v0.4.0.
+ * See the README for migration instructions.
  */
 export function AskamaWrapper<P extends Record<string, any>>(
   Component: React.ComponentType<P>,

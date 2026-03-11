@@ -1,6 +1,6 @@
 {
   "name": "rust-email",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Bridge react-email templates to Rust template engines (Askama/Tera/minijinja)",
   "type": "module",
   "exports": {
@@ -35,7 +35,8 @@
   ],
   "scripts": {
     "build": "bunchee",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "keywords": [
     "email",
@@ -60,9 +61,9 @@
     "change-case": "^5.4.4"
   },
   "peerDependencies": {
+    "@react-email/render": ">=1.0.0",
     "react": ">=18",
     "react-dom": ">=18",
-    "@react-email/render": ">=1.0.0",
     "ts-morph": ">=24.0.0"
   },
   "peerDependenciesMeta": {
@@ -75,11 +76,13 @@
   },
   "devDependencies": {
     "@react-email/render": "^1.0.0",
+    "@types/node": "^25.3.3",
     "@types/react": "*",
     "bunchee": "*",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "ts-morph": "^25.0.0",
-    "typescript": "*"
+    "typescript": "*",
+    "vitest": "^4.0.18"
   }
 }

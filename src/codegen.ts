@@ -24,6 +24,43 @@ function toRustType(meta: PropMeta, numberType: string): string {
 }
 
 /**
+ * Generate a Rust format! argument for a required field in a subject() method.
+ *
+ * Most types implement Display and can be used directly, but Vec<String> does not.
+ */
+function generateRequiredFormatArg(rustName: string, meta: PropMeta): string {
+  switch (meta.type) {
+    case "string[]":
+      return `self.${rustName}.join(", ")`;
+    default:
+      return `self.${rustName}`;
+  }
+}
+
+/**
+ * Generate a Rust format! argument for an optional field in a subject() method.
+ *
+ * Rules:
+ * - Option<String> / Option<object→String>: as_deref().unwrap_or("unknown")
+ * - Option<i64> / Option<bool> (non-string scalars): map(|v| v.to_string()).unwrap_or_else(|| "unknown".to_string())
+ * - Option<Vec<String>>: as_ref().map(|v| v.join(", ")).unwrap_or_else(|| "unknown".to_string())
+ */
+function generateOptionalFormatArg(rustName: string, meta: PropMeta): string {
+  switch (meta.type) {
+    case "string":
+    case "object":
+      return `self.${rustName}.as_deref().unwrap_or("unknown")`;
+    case "number":
+    case "boolean":
+      return `self.${rustName}.map(|v| v.to_string()).unwrap_or_else(|| "unknown".to_string())`;
+    case "string[]":
+      return `self.${rustName}.as_ref().map(|v| v.join(", ")).unwrap_or_else(|| "unknown".to_string())`;
+    default:
+      return `self.${rustName}.as_deref().unwrap_or("unknown")`;
+  }
+}
+
+/**
  * Generate a Rust struct definition with `#[derive(Template)]` for Askama.
  *
  * Converts a PropSchema into a Rust struct where:
@@ -53,11 +90,33 @@ export function generateRustStruct(
 
   // Generate subject() method if template provided
   if (config.subjectTemplate) {
+    // Validate: placeholder count must match subjectProps count
+    const subjectProps = config.subjectProps ?? [];
+    // Count real placeholders: `{}` but not `{{}}` (Rust literal braces).
+    // First strip all `{{` and `}}` escape sequences, then count `{}`.
+    const stripped = config.subjectTemplate.replace(/\{\{/g, "").replace(/\}\}/g, "");
+    const placeholderCount = (stripped.match(/\{}/g) || []).length;
+    if (subjectProps.length !== placeholderCount) {
+      throw new Error(
+        `rust-email: subjectTemplate has ${placeholderCount} placeholder(s) but subjectProps has ${subjectProps.length} prop(s). ` +
+        `They must match exactly.`,
+      );
+    }
+
+    // Validate: all subjectProps must exist in the schema
+    for (const p of subjectProps) {
+      if (!(p in schema)) {
+        throw new Error(
+          `rust-email: subjectProp "${p}" does not exist in the schema. ` +
+          `Available props: ${Object.keys(schema).join(", ")}`,
+        );
+      }
+    }
+
     lines.push("");
     lines.push(`impl ${config.structName} {`);
     lines.push(`    pub fn subject(&self) -> String {`);
 
-    const subjectProps = config.subjectProps ?? [];
     if (subjectProps.length === 0) {
       // Static subject
       lines.push(
@@ -70,9 +129,9 @@ export function generateRustStruct(
           const rustName = snakeCase(p);
           const meta = schema[p];
           if (meta?.optional) {
-            return `self.${rustName}.as_deref().unwrap_or("unknown")`;
+            return generateOptionalFormatArg(rustName, meta);
           }
-          return `self.${rustName}`;
+          return generateRequiredFormatArg(rustName, meta);
         })
         .join(", ");
       lines.push(

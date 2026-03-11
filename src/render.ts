@@ -52,23 +52,17 @@ function findConditionalBlock(
 }
 
 /**
- * Generate a unique marker value for a prop based on its type.
- * String props get a distinctive marker string.
- * Number props get a large unique number to avoid collisions.
+ * Generate a high-entropy unique marker value for a prop.
+ * All types use distinctive string markers to avoid collisions with real content.
+ * The marker is always a string — React will render it as text content.
  */
 function generateMarker(
   key: string,
-  type: string,
+  _type: string,
   counter: number,
-): string | number | boolean {
-  switch (type) {
-    case "number":
-      return 77700 + counter;
-    case "boolean":
-      return true;
-    default:
-      return `__RE_${key}_${counter.toString(36)}__`;
-  }
+): string {
+  // Use a high-entropy prefix that cannot collide with real template content
+  return `__RE_${key}_${counter.toString(36)}_${Math.random().toString(36).slice(2, 8)}__`;
 }
 
 interface ConditionalBlock {
@@ -111,7 +105,7 @@ export async function renderTemplate<P extends Record<string, unknown>>(
 
   // Step 1: Build marker props — each prop value is a unique identifiable string/number
   const markerProps: Record<string, unknown> = {};
-  const markerMap = new Map<string, { marker: string | number | boolean; askamaKey: string }>();
+  const markerMap = new Map<string, { marker: string; askamaKey: string }>();
   let counter = 0;
 
   for (const [key, meta] of Object.entries(schema)) {
@@ -122,9 +116,9 @@ export async function renderTemplate<P extends Record<string, unknown>>(
   }
 
   // Step 2: Render full HTML with all markers
-  const fullHtml = await render(
-    React.createElement(Component, markerProps as P),
-  );
+  // Merge original props with markers so non-schema fields (e.g. className, style) survive
+  const finalProps = { ...props, ...markerProps } as P;
+  const fullHtml = await render(React.createElement(Component, finalProps));
 
   // Step 3: Detect conditional blocks (optional props without fallback → && pattern)
   const conditionalProps = Object.entries(schema).filter(
@@ -138,7 +132,7 @@ export async function renderTemplate<P extends Record<string, unknown>>(
     if (!info) continue;
 
     // Render without this prop
-    const withoutProps = { ...markerProps };
+    const withoutProps = { ...props, ...markerProps };
     delete withoutProps[key];
     const withoutHtml = await render(
       React.createElement(Component, withoutProps as P),
@@ -153,8 +147,9 @@ export async function renderTemplate<P extends Record<string, unknown>>(
         content: diff.block,
       });
     } else if (fullHtml !== withoutHtml) {
-      warnings.push(
-        `${key}: conditional block is non-contiguous, needs manual Askama conversion`,
+      throw new Error(
+        `rust-email: "${key}" has a non-contiguous conditional block (e.g. ternary with both branches). ` +
+        `This cannot be converted to Askama automatically. Refactor the template to use simple && guards.`,
       );
     }
   }
@@ -192,7 +187,10 @@ export async function renderTemplate<P extends Record<string, unknown>>(
     if (result.includes(markerStr)) {
       result = replaceAll(result, markerStr, replacement);
     } else {
-      warnings.push(`${key}: marker not found in rendered HTML`);
+      throw new Error(
+        `rust-email: marker for optional prop "${key}" (with fallback) not found in rendered HTML. ` +
+        `Ensure the prop is used in the template.`,
+      );
     }
   }
 
@@ -215,8 +213,10 @@ export async function renderTemplate<P extends Record<string, unknown>>(
     if (result.includes(markerStr)) {
       result = replaceAll(result, markerStr, replacement);
     } else if (!meta.optional) {
-      // Required prop not found — warning
-      warnings.push(`${key}: required prop marker not found in rendered HTML`);
+      throw new Error(
+        `rust-email: required prop "${key}" marker not found in rendered HTML. ` +
+        `Ensure the prop is used in the template.`,
+      );
     }
     // Optional without fallback: marker might only appear inside conditional block
     // which is fine — it was already handled in step 4 content
@@ -237,6 +237,17 @@ export async function renderTemplate<P extends Record<string, unknown>>(
     }
   }
 
+  // Step 7: Fail if any markers remain — indicates a logic error
+  const residualPattern = /__RE_\w+_\w+_\w+__/g;
+  const residuals = result.match(residualPattern);
+  if (residuals) {
+    const unique = [...new Set(residuals)];
+    throw new Error(
+      `rust-email: residual markers found in rendered template: ${unique.join(", ")}. ` +
+      `This indicates a marker replacement bug.`,
+    );
+  }
+
   return { html: result, warnings };
 }
 
@@ -248,6 +259,7 @@ function replaceAll(str: string, search: string, replacement: string): string {
  * Validate that no marker values remain in the template output.
  * Also checks that no raw prop values from the original props leak through.
  *
+ * In strict mode (default), throws on any residual marker or leaked value.
  * Pass the schema to skip false positives where a prop's preview value
  * matches its fallback (e.g. currency: "US$" with fallback "US$").
  */
@@ -258,8 +270,8 @@ export function validateTemplate(
 ): { valid: boolean; unreplaced: string[] } {
   const unreplaced: string[] = [];
 
-  // Check for leftover markers
-  const markerPattern = /__RE_\w+_\w+__/g;
+  // Check for leftover markers (updated pattern for high-entropy markers)
+  const markerPattern = /__RE_\w+_\w+_\w+__/g;
   const leftoverMarkers = template.match(markerPattern);
   if (leftoverMarkers) {
     for (const m of new Set(leftoverMarkers)) {
@@ -284,5 +296,12 @@ export function validateTemplate(
     }
   }
 
-  return { valid: unreplaced.length === 0, unreplaced };
+  if (unreplaced.length > 0) {
+    throw new Error(
+      `rust-email: template validation failed — unreplaced values: ${unreplaced.join(", ")}. ` +
+      `This may indicate leaked prop values or residual markers.`,
+    );
+  }
+
+  return { valid: true, unreplaced: [] };
 }

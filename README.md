@@ -44,42 +44,46 @@ fs.writeFileSync("templates/auth/welcome.html", html);
 fs.writeFileSync("src/templates/auth.rs", rustCode);
 ```
 
-Generated Askama template:
+## Supported Syntax Matrix
 
-```html
-<p>Hi {% if let Some(ref user_name) = user_name %}{{ user_name }}{% else %}there{% endif %},</p>
-<p>Your workspace is ready.</p>
-```
+| React pattern | Askama output | Notes |
+|---|---|---|
+| `{userName ?? 'there'}` | `{% if let Some(ref user_name) = user_name %}{{ user_name }}{% else %}there{% endif %}` | `??` with string/number/boolean literal fallback |
+| `{props.currency ?? 'US$'}` | Same as above | Property access on LHS supported |
+| `{(name) ?? 'anon'}` | Same as above | Parenthesized LHS supported |
+| `{deploymentId && <Muted>...</Muted>}` | `{% if let Some(deployment_id) = deployment_id %}...{% endif %}` | Contiguous `&&` blocks only |
+| `{serviceName}` (required) | `{{ service_name }}` | Direct interpolation |
+| `{isActive}` (boolean) | `{% if is_active %}true{% else %}false{% endif %}` | Boolean rendering |
 
-Generated Rust struct:
+### Unsupported patterns (hard error, no implicit degradation)
 
-```rust
-#[derive(Template)]
-#[template(path = "auth/welcome.html")]
-pub struct Welcome {
-    pub user_name: Option<String>,
-}
-```
+| Pattern | Error |
+|---|---|
+| `{status ? <A/> : <B/>}` | **Non-contiguous conditional block** — ternary produces diff in both branches |
+| Dynamic `??` RHS (e.g. `x ?? getDefault()`) | No fallback inferred (not an error, but fallback is `undefined`) |
+
+## Failure Strategy
+
+v0.3.0 adopts **strict-fail, no silent degradation**:
+
+- **Non-contiguous diff** (ternary `?:` with both branches) → `throw Error` with prop name
+- **Required marker missing** from rendered HTML → `throw Error`
+- **Residual markers** in final output → `throw Error`
+- **`validateTemplate()`** throws on leaked prop values or residual markers
+- **`generateRustStruct()`** throws if `subjectTemplate` placeholder count ≠ `subjectProps` count, or if a `subjectProp` doesn't exist in the schema
 
 ## How It Works
 
 Traditional approach (`AskamaWrapper`, v0.1) replaces prop values **before** React renders — this breaks `&&` conditionals and `??` fallbacks because the placeholder string is always truthy.
 
-`renderTemplate()` (v0.2) uses **post-render replacement**:
+`renderTemplate()` (v0.2+) uses **post-render replacement**:
 
-1. Render the component normally with unique marker values
-2. For `&&` conditional blocks: render again without the prop, diff the two HTML outputs (LCP/LCS) to locate the conditional section
-3. Wrap detected sections with `{% if let Some(...) %}`
-4. Replace markers with `{{ variable }}` or `{% if let Some %}...{% else %}fallback{% endif %}`
-
-This correctly handles all common React patterns:
-
-| React pattern | Askama output |
-|---|---|
-| `{userName ?? 'there'}` | `{% if let Some(ref user_name) = user_name %}{{ user_name }}{% else %}there{% endif %}` |
-| `{deploymentId && <Muted>...</Muted>}` | `{% if let Some(deployment_id) = deployment_id %}...{% endif %}` |
-| `{currency ?? 'US$'}` | `{% if let Some(ref currency) = currency %}{{ currency }}{% else %}US${% endif %}` |
-| `{serviceName}` (required) | `{{ service_name }}` |
+1. Render the component with high-entropy marker strings for all prop types (no more `true`/`77700+N` — avoids collisions with real content)
+2. Merge `{ ...props, ...markerProps }` so non-schema fields (e.g. `className`, `style`) survive
+3. For `&&` conditional blocks: render again without the prop, diff the two HTML outputs (LCP/LCS) to locate the conditional section
+4. Wrap detected sections with `{% if let Some(...) %}`
+5. Replace markers with `{{ variable }}` or `{% if let Some %}...{% else %}fallback{% endif %}`
+6. Final residual-marker check — any leftover markers are a hard error
 
 ## API
 
@@ -93,7 +97,7 @@ Render a react-email component into an Askama-compatible HTML template.
 - `config.useSnakeCase` — Convert camelCase to snake_case (default: `true`)
 - `config.escapeHtml` — Add `|e` filter to interpolations (default: `false`)
 
-Returns `{ html: string, warnings: string[] }`.
+Returns `{ html: string, warnings: string[] }`. Throws on any structural error.
 
 ### `inferSchema(filePath)`
 
@@ -102,6 +106,8 @@ Parse a TypeScript source file and extract the props interface automatically.
 - Finds the interface ending with `Props`
 - Maps TypeScript types to `PropMeta` types
 - Detects `??` fallback values from JSX AST
+  - LHS: `identifier`, `props.xxx`, `(props.xxx)` all supported
+  - RHS: string, number, boolean literals supported; dynamic expressions ignored
 
 Returns `{ schema: PropSchema, interfaceName: string, componentName: string }`.
 
@@ -113,10 +119,18 @@ Generate a Rust `#[derive(Template)]` struct from a `PropSchema`.
 
 - `config.templatePath` — Askama `#[template(path = "...")]` value
 - `config.structName` — Rust struct name
-- `config.subjectTemplate` — Optional format string for a `subject()` method
-- `config.subjectProps` — Props to interpolate into the subject
+- `config.subjectTemplate` — Optional format string for a `subject()` method. Placeholder count must match `subjectProps` length.
+- `config.subjectProps` — Props to interpolate into the subject. Each must exist in the schema.
 - `config.numberType` — Rust numeric type (default: `"i64"`)
 - `config.derives` — Additional `#[derive(...)]` entries
+
+**Subject argument rules for optional props:**
+
+| Prop type | Generated Rust expression |
+|---|---|
+| `Option<String>` / `Option<object→String>` | `self.x.as_deref().unwrap_or("unknown")` |
+| `Option<i64>` / `Option<bool>` | `self.x.map(\|v\| v.to_string()).unwrap_or_else(\|\| "unknown".to_string())` |
+| `Option<Vec<String>>` | `self.x.as_ref().map(\|v\| v.join(", ")).unwrap_or_else(\|\| "unknown".to_string())` |
 
 ### `generateRustModule(templates)`
 
@@ -124,91 +138,29 @@ Batch version of `generateRustStruct` — generates a complete Rust module with 
 
 ### `validateTemplate(template, props, schema?)`
 
-Check that no raw prop values or marker strings remain in the generated template. Pass the schema to suppress false positives when a prop's preview value matches its fallback.
+Check that no raw prop values or marker strings remain in the generated template. Throws on failure. Pass the schema to suppress false positives when a prop's preview value matches its fallback.
 
-### `AskamaWrapper(Component, defaultProps, config?)` (legacy)
+### `AskamaWrapper(Component, defaultProps, config?)` ⚠️ Deprecated
 
-The original v0.1 HOC approach. Still works for templates without conditional rendering. Use `renderTemplate` for anything non-trivial.
+> **Deprecated in v0.3.0.** Will be removed in v0.4.0.
+>
+> Use `renderTemplate()` instead. AskamaWrapper replaces props before React renders, which breaks `&&` and `??` patterns.
+>
+> **Migration:** Replace `AskamaWrapper(Comp, props)` → `await renderTemplate(Comp, props, schema)`.
 
-## Example Export Script
+## CI Integration
 
-A complete script for batch-exporting all templates in a project:
+Add a verify script to your CI to ensure templates stay in sync:
 
-```typescript
-import * as fs from "node:fs";
-import * as path from "node:path";
-import {
-  inferSchema,
-  renderTemplate,
-  generateRustStruct,
-  validateTemplate,
-} from "rust-email";
-
-const TEMPLATES = [
-  {
-    file: "auth/welcome.tsx",
-    structName: "Welcome",
-    templatePath: "auth/welcome.html",
-    subject: { template: "Welcome to MyApp" },
-  },
-  {
-    file: "auth/email-verification.tsx",
-    structName: "EmailVerification",
-    templatePath: "auth/email-verification.html",
-    subject: { template: "Verify your email address" },
-  },
-  // ... add all your templates
-];
-
-const EMAILS_DIR = "./emails";
-const TEMPLATES_OUT = "../../libs/my-email/templates";
-const RUST_OUT = "../../libs/my-email/src/templates";
-
-async function main() {
-  for (const tmpl of TEMPLATES) {
-    const filePath = path.join(EMAILS_DIR, tmpl.file);
-
-    const { schema } = await inferSchema(filePath);
-    const mod = await import(filePath);
-    const Component = mod.default;
-
-    const { html, warnings } = await renderTemplate(
-      Component,
-      Component.PreviewProps,
-      schema,
-      { useSnakeCase: true },
-    );
-
-    if (warnings.length > 0) {
-      console.warn(`[${tmpl.file}] warnings:`, warnings);
-    }
-
-    const validation = validateTemplate(html, Component.PreviewProps, schema);
-    if (!validation.valid) {
-      console.error(`[${tmpl.file}] unreplaced:`, validation.unreplaced);
-      process.exit(1);
-    }
-
-    const outPath = path.join(TEMPLATES_OUT, tmpl.templatePath);
-    fs.mkdirSync(path.dirname(outPath), { recursive: true });
-    fs.writeFileSync(outPath, html);
-
-    const rustCode = generateRustStruct(schema, {
-      templatePath: tmpl.templatePath,
-      structName: tmpl.structName,
-      subjectTemplate: tmpl.subject.template,
-      subjectProps: tmpl.subject.props,
-    });
-
-    // Append to module file (or write per-domain files)
-    fs.appendFileSync(path.join(RUST_OUT, "mod.rs"), rustCode + "\n");
-
-    console.log(`[${tmpl.file}] OK`);
+```json
+{
+  "scripts": {
+    "verify:rust-email": "tsx scripts/export-templates.ts --check"
   }
 }
-
-main();
 ```
+
+The `--check` flag should compare generated output against committed files and exit non-zero on diff.
 
 ## License
 
