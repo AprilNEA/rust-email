@@ -211,7 +211,7 @@ Check that no raw prop values or marker strings remain in the generated template
 
 ### `AskamaWrapper(Component, defaultProps, config?)` ⚠️ Deprecated
 
-> **Deprecated in v0.3.0.** Will be removed in v0.4.0.
+> **Deprecated in v0.3.0.** Will be removed in v0.5.0.
 >
 > Use `renderTemplate()` instead. AskamaWrapper replaces props before React renders, which breaks `&&` and `??` patterns.
 >

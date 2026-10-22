@@ -51,7 +51,7 @@ export interface AskamaConfig {
  *
  * @deprecated Use `renderTemplate()` from `rust-email/render` instead.
  * AskamaWrapper replaces props **before** React renders, which breaks
- * `&&` conditionals and `??` fallbacks. It will be removed in v0.4.0.
+ * `&&` conditionals and `??` fallbacks. It will be removed in v0.5.0.
  * See the README for migration instructions.
  */
 export function AskamaWrapper<P extends Record<string, any>>(
