@@ -10,6 +10,8 @@ Design emails with React components and hot-reload preview, then export them as 
 - **Type-safe codegen** — Auto-generate `#[derive(Template)]` Rust structs from TypeScript props
 - **Schema inference** — Extract prop schemas from TypeScript interfaces via `ts-morph`
 - **Post-render replacement** — Correctly handles `??` fallbacks and `&&` conditional blocks
+- **Plain-text templates** — Generate a `.txt` template from the same component with React Email's plain-text conversion
+- **Multiple locales** — Generate a `Locale` enum and structs that select the template of a locale at run time
 - **Strict validation** — No silent degradation; errors on any structural issue
 
 ## Quick Example

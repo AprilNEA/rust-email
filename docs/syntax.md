@@ -4,7 +4,7 @@
 
 | React pattern | Askama output | Notes |
 |---|---|---|
-| `{userName ?? 'there'}` | `{% if let Some(ref user_name) = user_name %}{{ user_name }}{% else %}there{% endif %}` | `??` with string/number/boolean literal fallback |
+| `{userName ?? 'there'}` | `{% if let Some(user_name) = user_name %}{{ user_name }}{% else %}there{% endif %}` | `??` with string/number/boolean literal fallback |
 | `{props.currency ?? 'US$'}` | Same as above | Property access on LHS supported |
 | `{(name) ?? 'anon'}` | Same as above | Parenthesized LHS supported |
 | `{deploymentId && <Muted>...</Muted>}` | `{% if let Some(deployment_id) = deployment_id %}...{% endif %}` | Contiguous `&&` blocks only |

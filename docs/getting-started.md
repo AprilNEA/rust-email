@@ -66,12 +66,20 @@ fs.writeFileSync("templates/auth/welcome.html", html);
 fs.writeFileSync("src/templates/auth.rs", rustCode);
 ```
 
+### Plain text and multiple locales
+
+Pass `plainText: true` to `renderTemplate()` to also get a plain-text template, and set `textTemplatePath` in `generateRustStruct()` to get a `render_text()` method.
+
+For several locales, call `renderTemplate()` once per locale and generate the Rust code with `generateLocalizedRustModule()`. See the [API Reference](api.md#generatelocalizedrustmoduletemplates-localeconfig).
+
 ## Failure Strategy
 
 v0.3.0 adopts **strict-fail, no silent degradation**:
 
 - **Non-contiguous diff** (ternary `?:` with both branches) → `throw Error` with prop name
 - **Required marker missing** from rendered HTML → `throw Error`
+- **Prop missing from the plain-text output** (for example an image URL) → warning in `warnings`, not an error
 - **Residual markers** in final output → `throw Error`
 - **`validateTemplate()`** throws on leaked prop values or residual markers
 - **`generateRustStruct()`** throws if `subjectTemplate` placeholder count ≠ `subjectProps` count, or if a `subjectProp` doesn't exist in the schema
+- **`generateLocalizedRustStruct()`** throws if a locale has no entry, an unknown entry or two entries, or if only some locales set `textTemplatePath` or `subjectTemplate`

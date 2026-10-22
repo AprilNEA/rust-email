@@ -1,6 +1,12 @@
 import { snakeCase } from "change-case";
 import React from "react";
-import type { PropSchema, RenderConfig, RenderResult } from "./types";
+import type {
+  HtmlToTextOptions,
+  PlainTextConfig,
+  PropSchema,
+  RenderConfig,
+  RenderResult,
+} from "./types";
 
 /**
  * Find the single contiguous block present in `full` but absent in `without`.
@@ -55,6 +61,9 @@ function findConditionalBlock(
  * Generate a high-entropy unique marker value for a prop.
  * All types use distinctive string markers to avoid collisions with real content.
  * The marker is always a string — React will render it as text content.
+ *
+ * The marker is upper case, so it survives html-to-text, which converts
+ * headings to upper case in the plain-text output.
  */
 function generateMarker(
   key: string,
@@ -62,7 +71,8 @@ function generateMarker(
   counter: number,
 ): string {
   // Use a high-entropy prefix that cannot collide with real template content
-  return `__RE_${key}_${counter.toString(36)}_${Math.random().toString(36).slice(2, 8)}__`;
+  const random = Math.random().toString(36).slice(2, 8);
+  return `__RE_${key}_${counter.toString(36)}_${random}__`.toUpperCase();
 }
 
 interface ConditionalBlock {
@@ -72,8 +82,60 @@ interface ConditionalBlock {
   content: string;
 }
 
+interface MarkerInfo {
+  marker: string;
+  askamaKey: string;
+}
+
+/** Renders the component with the given props into one output format. */
+type RenderOutput = (props: Record<string, unknown>) => Promise<string>;
+
+interface BuildContext {
+  schema: PropSchema;
+  props: Record<string, unknown>;
+  markerProps: Record<string, unknown>;
+  markerMap: Map<string, MarkerInfo>;
+  escapeFilter: string;
+  /** Output format for messages: "HTML" or "plain text" */
+  label: string;
+  /**
+   * Throw when a required prop or a prop with a fallback is missing from the
+   * output. When false, add a warning instead.
+   */
+  strictMarkers: boolean;
+  warnings: string[];
+}
+
+interface Renderer {
+  render: (
+    element: React.ReactElement,
+    options?: { plainText?: boolean; htmlToTextOptions?: HtmlToTextOptions },
+  ) => Promise<string>;
+  toPlainText?: (html: string, options?: HtmlToTextOptions) => string;
+  plainTextSelectors?: NonNullable<HtmlToTextOptions["selectors"]>;
+}
+
+async function loadRenderer(): Promise<Renderer> {
+  try {
+    const mod = await import("@react-email/render");
+    // Older versions of @react-email/render do not export toPlainText or
+    // plainTextSelectors.
+    const optional = mod as Partial<Renderer>;
+    return {
+      render: mod.render as Renderer["render"],
+      toPlainText: optional.toPlainText,
+      plainTextSelectors: optional.plainTextSelectors,
+    };
+  } catch {
+    throw new Error(
+      "rust-email: @react-email/render is required. Install it with: pnpm add @react-email/render",
+    );
+  }
+}
+
 /**
- * Render a react-email component into an Askama-compatible HTML template.
+ * Render a react-email component into an Askama-compatible HTML template, and
+ * optionally into a plain-text template.
  *
  * Strategy (post-render replacement):
  * 1. Render the component with unique marker values for all props
@@ -81,31 +143,36 @@ interface ConditionalBlock {
  *    render again without that prop, diff to find the conditional HTML section
  * 3. Wrap conditional sections with {% if let Some(...) %}...{% endif %}
  * 4. Replace remaining markers with {{ var }} or {% if let Some %}...{% else %}...{% endif %}
+ *
+ * With `plainText`, the same steps run on the plain-text conversion of each render.
  */
+export async function renderTemplate<P extends Record<string, unknown>>(
+  Component: React.ComponentType<P>,
+  props: P,
+  schema: PropSchema,
+  config: RenderConfig & { plainText: true | PlainTextConfig },
+): Promise<RenderResult & { text: string }>;
+export async function renderTemplate<P extends Record<string, unknown>>(
+  Component: React.ComponentType<P>,
+  props: P,
+  schema: PropSchema,
+  config?: RenderConfig,
+): Promise<RenderResult>;
 export async function renderTemplate<P extends Record<string, unknown>>(
   Component: React.ComponentType<P>,
   props: P,
   schema: PropSchema,
   config: RenderConfig = {},
 ): Promise<RenderResult> {
-  let render: (element: React.ReactElement) => Promise<string>;
-  try {
-    const mod = await import("@react-email/render");
-    render = mod.render;
-  } catch {
-    throw new Error(
-      "rust-email: @react-email/render is required. Install it with: pnpm add @react-email/render",
-    );
-  }
+  const renderer = await loadRenderer();
 
   const useSnakeCase = config.useSnakeCase ?? true;
   const toCase = useSnakeCase ? snakeCase : (s: string) => s;
-  const escapeFilter = config.escapeHtml ? "|e" : "";
   const warnings: string[] = [];
 
   // Step 1: Build marker props — each prop value is a unique identifiable string/number
   const markerProps: Record<string, unknown> = {};
-  const markerMap = new Map<string, { marker: string; askamaKey: string }>();
+  const markerMap = new Map<string, MarkerInfo>();
   let counter = 0;
 
   for (const [key, meta] of Object.entries(schema)) {
@@ -115,10 +182,76 @@ export async function renderTemplate<P extends Record<string, unknown>>(
     markerMap.set(key, { marker, askamaKey });
   }
 
-  // Step 2: Render full HTML with all markers
+  const context = { schema, props, markerProps, markerMap, warnings };
+  const renderHtml: RenderOutput = (p) =>
+    renderer.render(React.createElement(Component, p as P));
+
+  const html = await buildTemplate(renderHtml, {
+    ...context,
+    escapeFilter: config.escapeHtml ? "|e" : "",
+    label: "HTML",
+    strictMarkers: true,
+  });
+
+  if (!config.plainText) {
+    return { html, warnings };
+  }
+
+  const htmlToTextOptions = textOptions(config.plainText, renderer);
+  const { toPlainText } = renderer;
+  const renderText: RenderOutput = toPlainText
+    ? async (p) => toPlainText(await renderHtml(p), htmlToTextOptions)
+    : (p) =>
+        renderer.render(React.createElement(Component, p as P), {
+          plainText: true,
+          htmlToTextOptions,
+        });
+
+  const text = await buildTemplate(renderText, {
+    ...context,
+    // Askama does not escape .txt templates, and HTML escaping would corrupt text.
+    escapeFilter: "",
+    label: "plain text",
+    // A prop can be absent from the text, for example an image URL.
+    strictMarkers: false,
+  });
+
+  return { html, text, warnings };
+}
+
+/**
+ * Build the html-to-text options for the plain-text output.
+ *
+ * React Email's `toPlainText` replaces its default selectors when the caller
+ * passes `selectors`, which drops rules such as "skip images". Put the
+ * defaults first instead: html-to-text merges selectors with the same
+ * `selector` value, and the later one wins.
+ */
+function textOptions(
+  plainText: true | PlainTextConfig,
+  renderer: Renderer,
+): HtmlToTextOptions | undefined {
+  const options = typeof plainText === "object" ? plainText.htmlToTextOptions : undefined;
+  if (!options?.selectors || !renderer.plainTextSelectors) return options;
+  return {
+    ...options,
+    selectors: [...renderer.plainTextSelectors, ...options.selectors],
+  };
+}
+
+/**
+ * Run the post-render replacement on one output format and return the
+ * Askama template.
+ */
+async function buildTemplate(
+  renderOutput: RenderOutput,
+  ctx: BuildContext,
+): Promise<string> {
+  const { schema, props, markerProps, markerMap, escapeFilter, label } = ctx;
+
+  // Step 2: Render the full output with all markers
   // Merge original props with markers so non-schema fields (e.g. className, style) survive
-  const finalProps = { ...props, ...markerProps } as P;
-  const fullHtml = await render(React.createElement(Component, finalProps));
+  const fullHtml = await renderOutput({ ...props, ...markerProps });
 
   // Step 3: Detect conditional blocks (optional props without fallback → && pattern)
   const conditionalProps = Object.entries(schema).filter(
@@ -134,9 +267,7 @@ export async function renderTemplate<P extends Record<string, unknown>>(
     // Render without this prop
     const withoutProps = { ...props, ...markerProps };
     delete withoutProps[key];
-    const withoutHtml = await render(
-      React.createElement(Component, withoutProps as P),
-    );
+    const withoutHtml = await renderOutput(withoutProps);
 
     const diff = findConditionalBlock(fullHtml, withoutHtml);
     if (diff) {
@@ -148,7 +279,7 @@ export async function renderTemplate<P extends Record<string, unknown>>(
       });
     } else if (fullHtml !== withoutHtml) {
       throw new Error(
-        `rust-email: "${key}" has a non-contiguous conditional block (e.g. ternary with both branches). ` +
+        `rust-email: "${key}" has a non-contiguous conditional block in the ${label} output (e.g. ternary with both branches). ` +
         `This cannot be converted to Askama automatically. Refactor the template to use simple && guards.`,
       );
     }
@@ -179,17 +310,23 @@ export async function renderTemplate<P extends Record<string, unknown>>(
     if (!info) continue;
     const markerStr = String(info.marker);
     const fallback = String(meta.fallback);
+    // No `ref` in the pattern: Askama matches on a reference to the field,
+    // and Askama 0.16 rejects `ref` as a binding name.
     const replacement =
-      `{% if let Some(ref ${info.askamaKey}) = ${info.askamaKey} %}` +
+      `{% if let Some(${info.askamaKey}) = ${info.askamaKey} %}` +
       `{{ ${info.askamaKey}${escapeFilter} }}` +
       `{% else %}${fallback}{% endif %}`;
 
     if (result.includes(markerStr)) {
       result = replaceAll(result, markerStr, replacement);
-    } else {
+    } else if (ctx.strictMarkers) {
       throw new Error(
-        `rust-email: marker for optional prop "${key}" (with fallback) not found in rendered HTML. ` +
+        `rust-email: marker for optional prop "${key}" (with fallback) not found in rendered ${label}. ` +
         `Ensure the prop is used in the template.`,
+      );
+    } else {
+      ctx.warnings.push(
+        `rust-email: prop "${key}" does not appear in the ${label} output.`,
       );
     }
   }
@@ -212,10 +349,14 @@ export async function renderTemplate<P extends Record<string, unknown>>(
 
     if (result.includes(markerStr)) {
       result = replaceAll(result, markerStr, replacement);
-    } else if (!meta.optional) {
+    } else if (!meta.optional && ctx.strictMarkers) {
       throw new Error(
-        `rust-email: required prop "${key}" marker not found in rendered HTML. ` +
+        `rust-email: required prop "${key}" marker not found in rendered ${label}. ` +
         `Ensure the prop is used in the template.`,
+      );
+    } else if (!meta.optional) {
+      ctx.warnings.push(
+        `rust-email: prop "${key}" does not appear in the ${label} output.`,
       );
     }
     // Optional without fallback: marker might only appear inside conditional block
@@ -243,12 +384,12 @@ export async function renderTemplate<P extends Record<string, unknown>>(
   if (residuals) {
     const unique = [...new Set(residuals)];
     throw new Error(
-      `rust-email: residual markers found in rendered template: ${unique.join(", ")}. ` +
+      `rust-email: residual markers found in rendered ${label} template: ${unique.join(", ")}. ` +
       `This indicates a marker replacement bug.`,
     );
   }
 
-  return { html: result, warnings };
+  return result;
 }
 
 function replaceAll(str: string, search: string, replacement: string): string {

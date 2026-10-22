@@ -151,3 +151,65 @@ describe("codegen subject validation", () => {
     expect(code).not.toMatch(/format!.*self\.tags[^.]/);
   });
 });
+
+describe("codegen plain-text template", () => {
+  const schema: PropSchema = {
+    name: { type: "string", optional: false },
+  };
+
+  it("should not change the output when textTemplatePath is not set", () => {
+    const code = generateRustStruct(schema, {
+      templatePath: "auth/welcome.html",
+      structName: "Welcome",
+    });
+
+    expect(code).toBe(
+      [
+        "#[derive(Template)]",
+        '#[template(path = "auth/welcome.html")]',
+        "pub struct Welcome {",
+        "    pub name: String,",
+        "}",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("should add render_text() and a Deref wrapper for the text template", () => {
+    const code = generateRustStruct(schema, {
+      templatePath: "auth/welcome.html",
+      textTemplatePath: "auth/welcome.txt",
+      structName: "Welcome",
+      subjectTemplate: "Welcome, {}",
+      subjectProps: ["name"],
+    });
+
+    // subject() and render_text() share one impl block
+    expect(code.match(/impl Welcome \{/g)).toHaveLength(1);
+    expect(code).toContain("pub fn subject(&self) -> String {");
+    expect(code).toContain("pub fn render_text(&self) -> askama::Result<String> {");
+    expect(code).toContain("WelcomeText(self).render()");
+    expect(code).toContain(
+      '#[template(path = "auth/welcome.txt")]\nstruct WelcomeText<\'a>(&\'a Welcome);',
+    );
+    expect(code).toContain("impl std::ops::Deref for WelcomeText<'_> {");
+    expect(code).toContain("    fn deref(&self) -> &Welcome {");
+  });
+});
+
+describe("codegen Rust string literals", () => {
+  it("should write escapes that Rust accepts", () => {
+    const code = generateRustStruct(
+      { name: { type: "string", optional: false } },
+      {
+        templatePath: "test.html",
+        structName: "Literal",
+        subjectTemplate: 'Tab\there "quoted" \u0001 \b C:\\build',
+      },
+    );
+
+    expect(code).toContain(
+      '"Tab\\there \\"quoted\\" \\u{0001} \\u{8} C:\\\\build".to_string()',
+    );
+  });
+});
